@@ -1,0 +1,318 @@
+---
+title: "Open Street Map"
+subtitle: "Egypt, May-2021"
+author: "Hany Nagaty"
+output:
+  pdf_document:
+     latex_engine: xelatex
+  html_document:
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, include = FALSE, message = FALSE)
+```
+
+```{r}
+library(sf)
+library(tidyverse)
+library(knitr)
+library(kableExtra)
+library(scales)
+```
+# Open Street Maps Description
+This is a brief description for the data downloaded from [Open Street Map](https://www.openstreetmap.org/#map=13/30.0225/31.4812) website. OSM is described as “a map of the world, created by people like you and free to use under an open license”.
+I downloaded the data for Egypt on May-2021. I used this [mirror](https://download.geofabrik.de/africa.html).
+
+
+```{r shpTable, eval=FALSE}
+shp %>%
+  as_tibble() %>% 
+  mutate(fclass = as.factor(fclass)) %>% 
+  mutate(fclass = fct_lump_n(fclass, 5)) %>% 
+  pull(fclass) %>% 
+  fct_count(prop = TRUE) %>% 
+  mutate(p = percent(p)) %>% 
+  rename(Class = f, Count = n, Proportion = p) %>% 
+  arrange(desc(Count)) %>% 
+  kable(digits = 2, 
+        format.args = list(big.mark = ","),
+        caption = "Counts Table") %>% 
+  kable_classic(full_width = FALSE,  position = "left") %>% 
+  column_spec(3, bold = TRUE)
+```
+
+```{r shpPlot, eval=FALSE}
+ggplot(shp) +
+  geom_sf(aes(color = fclass)) +
+  theme(legend.position = "none")
+```
+
+### The data has the below **16 layers**    
+
+## 1. `gis_osm_roads_free_1`
+
+```{r}
+shp_file <- "D:/Geodata/~MapsInUse/EgyptOSM/gis_osm_roads_free_1.shp"
+shp <- st_read(shp_file)
+```
+
+This is the **road network**. It has classes such as motorway,  primary, secondary, residential, …..etc.  
+
+Total number of line segments: `r nrow(shp)`.  
+
+```{r, include=TRUE, ref.label=c('shpTable')}
+```
+
+``` {r, include=TRUE}
+shp %>% 
+  as_tibble() %>%
+  count(bridge, sort = TRUE) %>%
+  kable(digits = 2, format.args = list(big.mark = ",")) %>% 
+  kable_classic(full_width = FALSE,  position = "left") %>% 
+  column_spec(2, bold = TRUE)
+shp %>% 
+  as_tibble() %>%
+  count(tunnel, sort = TRUE) %>%
+  kable(digits = 2, format.args = list(big.mark = ",")) %>% 
+  kable_classic(full_width = FALSE,  position = "left") %>% 
+  column_spec(2, bold = TRUE)
+shp %>% 
+  as_tibble() %>%
+  count(oneway, sort = TRUE) %>%
+  kable(digits = 2, format.args = list(big.mark = ",")) %>% 
+  kable_classic(full_width = FALSE,  position = "left") %>% 
+  column_spec(2, bold = TRUE)
+```
+
+```{r, include=TRUE, ref.label='shpPlot'}
+```
+
+
+
+## 2. `gis_osm_pois_free_1`
+
+```{r}
+shp_file <- "D:/Geodata/~MapsInUse/EgyptOSM/gis_osm_pois_free_1.shp"
+shp <- st_read(shp_file)
+```
+**Points of Interest**. This might include shopping places, hotels, hospitals, water towers, telecom towers.   
+*Note that the list is not comprehensive*  
+
+Total number of points: `r nrow(shp)`
+
+```{r, include=TRUE, ref.label=c('shpTable', 'shpPlot')}
+```
+
+
+## 3. `gis_osm_pois_a_free_1`
+
+```{r}
+shp_file <- "D:/Geodata/~MapsInUse/EgyptOSM/gis_osm_pois_a_free_1.shp"
+shp <- st_read(shp_file)
+```
+Another set of **Points of Interest**.  
+In contrast to the previous list, this list contains MULTIPOLYGON instead of POINT.  
+
+Total number of points: `r nrow(shp)`
+
+```{r, include=TRUE, ref.label=c('shpRead', 'shpTable', 'shpPlot')}
+```
+
+
+## 4. gis_osm_pofw_free_1
+
+```{r}
+shp_file <- "D:/Geodata/~MapsInUse/EgyptOSM/gis_osm_pofw_free_1.shp"
+shp <- st_read(shp_file)
+```
+**Places of Worship**, this includes mosques and churches.  
+
+Total number of features: `r nrow(shp)`
+
+```{r, include=TRUE, ref.label=c('shpRead', 'shpTable', 'shpPlot')}
+```
+
+
+## 5. gis_osm_pofw_a_free_1
+
+```{r}
+shp_file <- "D:/Geodata/~MapsInUse/EgyptOSM/gis_osm_pofw_a_free_1.shp"
+shp <- st_read(shp_file)
+```
+Another set of **Places of Worship**. The GIS features here are in POLYGON format rather than POINT format.    
+
+Total number of features: `r nrow(shp)`
+
+```{r, include=TRUE, ref.label=c('shpRead', 'shpTable', 'shpPlot')}
+```
+
+
+## 6. gis_osm_railways_free_1
+
+```{r}
+shp_file <- "D:/Geodata/~MapsInUse/EgyptOSM/gis_osm_railways_free_1.shp"
+shp <- st_read(shp_file)
+```
+
+This is the **railway network**. It has classes such as railway, tram and subway.  
+
+Total number of features: `r nrow(shp)`
+
+```{r, include=TRUE, ref.label=c('shpRead', 'shpTable', 'shpPlot')}
+```
+
+
+## 7. gis_osm_traffic_free_1
+
+```{r}
+shp_file <- "D:/Geodata/~MapsInUse/EgyptOSM/gis_osm_traffic_free_1.shp"
+shp <- st_read(shp_file)
+```
+
+This is the **traffic landmarks**, such as crossings or junctions.  
+
+Total number of features: `r nrow(shp)`
+
+```{r, include=TRUE, ref.label=c('shpRead', 'shpTable', 'shpPlot')}
+```
+
+
+## 8. gis_osm_traffic_a_free_1
+
+```{r}
+shp_file <- "D:/Geodata/~MapsInUse/EgyptOSM/gis_osm_traffic_a_free_1.shp"
+shp <- st_read(shp_file)
+```
+
+Another set of **traffic landmarks**. The GIS features here are in MULTIPOLYGON format rather than POINT format.  
+
+Total number of features: `r nrow(shp)`
+
+```{r, include=TRUE, ref.label=c('shpRead', 'shpTable', 'shpPlot')}
+```
+
+
+## 9. gis_osm_transport_free_1
+
+```{r}
+shp_file <- "D:/Geodata/~MapsInUse/EgyptOSM/gis_osm_transport_free_1.shp"
+shp <- st_read(shp_file)
+```
+
+**Transportation landmarks**, this includes bus stations and others.   
+*The list is not comprehensive*  
+
+Total number of features: `r nrow(shp)`
+
+```{r, include=TRUE, ref.label=c('shpRead', 'shpTable', 'shpPlot')}
+```
+
+
+## 10. gis_osm_transport_a_free_1
+
+```{r}
+shp_file <- "D:/Geodata/~MapsInUse/EgyptOSM/gis_osm_transport_a_free_1.shp"
+shp <- st_read(shp_file)
+```
+
+Another set of **transportation landmarks**. The GIS features here are in MULTIPOLYGON format rather than POINT format.  
+*The list is not comprehensive*  
+
+Total number of features: `r nrow(shp)`
+
+```{r, include=TRUE, ref.label=c('shpRead', 'shpTable', 'shpPlot')}
+```
+
+  
+## 11. gis_osm_buildings_a_free_1
+
+```{r}
+shp_file <- "D:/Geodata/~MapsInUse/EgyptOSM/gis_osm_buildings_a_free_1.shp"
+shp <- st_read(shp_file)
+```
+
+Building boundaries. Some buildings has names; I found places such as تلفزيون وراديو ماسبيرو, مستشفى العجوزة.   
+*This layer is very sparse and lacks most of the buildings.*  
+
+Total number of features: `r nrow(shp)`
+
+```{r, include=TRUE, ref.label=c('shpRead', 'shpTable', 'shpPlot')}
+```
+
+  
+## 12. gis_osm_places_free_1
+
+```{r}
+shp_file <- "D:/Geodata/~MapsInUse/EgyptOSM/gis_osm_places_free_1.shp"
+shp <- st_read(shp_file)
+```
+
+**Places**. It contains villages and others.  
+
+Total number of features: `r nrow(shp)`
+
+```{r, include=TRUE, ref.label=c('shpRead', 'shpTable', 'shpPlot')}
+```
+  
+
+## 13. `gis_osm_places_a_free_1`
+
+```{r}
+shp_file <- "D:/Geodata/~MapsInUse/EgyptOSM/gis_osm_places_a_free_1.shp"
+shp <- st_read(shp_file)
+```
+
+**Places** in POLYGON rather than POINT format.  
+
+Total number of features: `r nrow(shp)`
+
+```{r, include=TRUE, ref.label=c('shpRead', 'shpTable', 'shpPlot')}
+```
+
+  
+## 14. `gis_osm_natural_free_1`
+
+```{r}
+shp_file <- "D:/Geodata/~MapsInUse/EgyptOSM/gis_osm_natural_free_1.shp"
+shp <- st_read(shp_file)
+```
+
+**Natural** landmarks, like trees or springs.  
+
+Total number of features: `r nrow(shp)`
+
+```{r, include=TRUE, ref.label=c('shpRead', 'shpTable', 'shpPlot')}
+```
+
+
+## 15. `gis_osm_natural_a_free_1`
+
+```{r}
+shp_file <- "D:/Geodata/~MapsInUse/EgyptOSM/gis_osm_natural_a_free_1.shp"
+shp <- st_read(shp_file)
+```
+
+**Natural** landmarks in POLYGON rather than POINT format.    
+
+Total number of features: `r nrow(shp)`
+
+```{r, include=TRUE, ref.label=c('shpRead', 'shpTable', 'shpPlot')}
+```
+
+
+## 16. `gis_osm_water_a_free_1`
+
+```{r}
+shp_file <- "D:/Geodata/~MapsInUse/EgyptOSM/gis_osm_water_a_free_1.shp"
+shp <- st_read(shp_file)
+```
+
+**Water** features, it includes the River Nile, lakes, ... etc.    
+
+Total number of features: `r nrow(shp)`
+
+```{r, include=TRUE, ref.label=c('shpRead', 'shpTable', 'shpPlot')}
+```
+
+  
