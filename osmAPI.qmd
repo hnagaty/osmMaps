@@ -1,0 +1,133 @@
+---
+title: "OSM API"
+format: html
+editor: visual
+---
+
+```{r}
+library(sf)
+library(units)
+library(tidyverse)
+library(kableExtra)
+```
+
+```{r}
+#| label: pins
+library(pins)
+pin_folder <- "/vol/data/dataLocal/pins"
+board <- board_folder(pin_folder, versioned = TRUE)
+
+# load pin if it exists
+if (pin_exists(board, "osmRoads")) {
+  t1 <- pin_read(board, "osmRoads")
+}
+```
+
+## Overpass API
+
+I try to download Egypt OSM maps via the overpass API. The [Overpass API](https://wiki.openstreetmap.org/wiki/Overpass_API)is a read only API provided by OSM to download selected data. It has an playground [here](https://overpass-turbo.eu/).
+
+This [link](https://wiki.openstreetmap.org/wiki/Map_features) is useful for describing the map features and tags.
+
+I use the R package [`osmdata`](https://docs.ropensci.org/osmdata/) for this. The package is designed to allow access to small-to-medium-sized OSM datasets. See [`osmextract`](https://github.com/ropensci/osmextract) for an approach for reading-in bulk OSM data extracts.
+
+```{r}
+library(osmdata)
+```
+
+#### Get Bounding Box
+
+```{r}
+getbb("cairo egypt", format_out = "sf_polygon") %>% plot()
+```
+
+#### Available features
+
+Egypt boundaries
+
+*Got this from [here](https://gist.github.com/graydon/11198540)*
+
+```{r}
+egypt_box <- c(24.70007, 22.0, 36.86623, 31.58568)  
+  # matrix(ncol = 2)
+```
+
+List available features in the Overpass API
+
+```{r}
+available_features() |> 
+  kbl()
+```
+
+I have `r length(available_features())` features. The most interesting here are highways and amenities.
+
+### Highways
+
+The highways of interest are (as described [here](https://wiki.openstreetmap.org/wiki/Map_features#Highway)):
+
+1.  **Motorway**: A restricted access major divided highway, normally with 2 or more running lanes plus emergency hard shoulder. Equivalent to the Freeway, Autobahn, etc..
+2.  **Trunk**: The most important roads in a country's system that aren't motorways. (Need not necessarily be a divided highway).
+3.  **Primary**: The next most important roads in a country's system. (Often link larger towns.)
+
+```{r}
+#| label: readOSM
+if (!exists("t1")) {
+  t1 <- opq(egypt_box) |>
+    add_osm_features(features = c("\"highway\"=\"motorway\"",
+                                  "\"highway\"=\"trunk\"",
+                                  "\"highway\"=\"primary\"")) |> 
+    osmdata_sf()}
+roads <- t1 |> 
+  chuck("osm_lines") |> 
+  st_transform(crs = 32636)
+```
+
+*This takes sometime, and downloads large data. It's because the primary roads are so huge.*
+
+```{r}
+#| label: savePin
+#| eval: false
+pin_write(board, t1, name = "osmRoads", type = "rds",
+          title = "Egypt OSM Roads", 
+          description = "I downloaded highways for the tags: motorway, trunk & primary.")
+```
+
+```{r}
+roads |> 
+  ggplot() +
+  geom_sf(aes(color = highway, size = highway)) +
+  scale_colour_manual(values = c("red", "orange", "brown", "blue")) +
+  scale_size_manual(values = c(1.5, 0.5, 0.5, 0.8)) +
+  ggtitle("Egypt Roads")
+```
+
+Motorways
+
+```{r}
+roads |> 
+  filter(highway == "motorway") |> 
+  mutate(Length = st_length(geometry)) |> 
+  st_drop_geometry() |> 
+  group_by(name) |> 
+  summarize(Length = set_units(sum(Length), "km")) |> 
+  arrange(desc(Length)) |> 
+  rename("Road Name" = name, "Length in Km" = Length) |> 
+  kbl(digits = 2) |> 
+  kable_styling(bootstrap_options = c("hover")) |> 
+  row_spec(0, bold = T, font_size = 16, align = "center") |> 
+  column_spec(1, bold = T, border_right = T, width = "10cm") 
+```
+
+Plot a single road name
+
+```{r}
+roads |> 
+  mutate(Interest = if_else(name.en == "The Ring Road" & highway == "motorway", "Yes", "No", missing = "No")) |> 
+  ggplot() +
+  geom_sf(aes(color = Interest, size = Interest)) +
+  scale_colour_manual(values = c("Yes" = "red", "No" = "orange")) +
+  scale_size_manual(values =  c("Yes" = 1, "No" = 0.2)) +
+  ggtitle("Egypt Roads")
+```
+
+To identify Cairo ring road, I filter by `highway = "motorway"` and `name.en = "The Ring Road"`.

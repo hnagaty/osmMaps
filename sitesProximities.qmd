@@ -1,0 +1,127 @@
+---
+title: "Sites Proximities"
+author: "Hany Nagaty"
+format: html
+editor: visual
+---
+
+```{r}
+#| label: loadLibs
+#| echo: false
+library(tidyverse)
+library(sf)
+```
+
+```{r}
+#| label: init
+eg_crs <- list()
+eg_crs$utm <- 32636 # WGS84 Zone 36N
+eg_crs$wgs84  <- 4326 # WGS 84 Lat/Long
+```
+
+```{r}
+#| label: initFunctions
+
+#' Stats for nearest neighbours
+#' Given a distance matrix, return some primary stats for the
+#' k nearest neighbours
+#'
+#' @param di a dense distance matrix
+#' @param k number of nearest neighbours to consider, excluding
+#'        the 1st neigbour, as this is the self neigbour.
+#'
+#' @return a list 
+nearest_stats <- function(di, k) {
+  k <- as.integer(k)
+  stopifnot(k > 0)
+  k <- min(k, length(di) - 1)
+  res <- list()
+  ne <- sort(di)[2:(1+k)]
+  res$k <- k
+  res$names <- names(ne)
+  res$mean <- mean(ne, na.rm = TRUE)
+  res$sd <- sd(ne, na.rm = TRUE)
+  return(res)
+}
+```
+
+```{r}
+#| label: initPin
+library(pins)
+board <- board_folder("/vol/data/dataLocal/pins", versioned = TRUE)
+pin_name <- "unifiedDB"
+```
+
+Load the Sites
+
+```{r}
+#| label: loadSitesPin
+sites <- pin_read(board, pin_name) |> 
+  chuck("sites") |> 
+  filter(!is.na(ReadEarliestDiscoveryDate)) |> 
+  filter(!is.na(Longitude)) |> 
+  st_as_sf(coords = c("Longitude", "Latitude"),
+           crs = eg_crs$wgs84 ) |> 
+  st_transform(eg_crs$utm)
+```
+
+Distance Matrix
+
+```{r distMatrix}
+d <- st_distance(sites)
+colnames(d) <- sites$SiteID
+rownames(d) <- sites$SiteID
+```
+
+This is an alternative code for calculating the nearest k statistics that I used in earlier projects.
+
+```{r}
+#| label: nearestK
+#| eval: false
+
+library(RANN)
+
+sitesCords <- vfSites@coords
+k <- 6 # no of nearest nbrs to consider
+# Metrics are based on K nearest sites
+distMatrix <- nn2(sitesCords,k = k)
+vfSites$minDist <- apply(distMatrix[["nn.dists"]][,2:k],1,min)
+vfSites$maxDist <- apply(distMatrix[["nn.dists"]][,2:k],1,max)
+vfSites$meanDist <- apply(distMatrix[["nn.dists"]][,2:k],1,mean)
+vfSites$sdDist <- apply(distMatrix[["nn.dists"]][,2:k],1,sd)
+vfSites <- vfSites %>% mutate(normSd = sdDist/meanDist)
+
+```
+
+```{r}
+#| label: calcStats
+# calculate nearest stats
+t <- d |> 
+  apply(1, nearest_stats, k = 2) |> 
+  as_tibble_col() |> 
+  unnest_wider(value) |> 
+  rename(NearestMean = mean,
+       NearestSD = sd,
+       NearestK = k,
+       NearestSites = names) 
+# bind with sites
+sites <- sites |> 
+  bind_cols(t)
+```
+
+```{r}
+buffers <- st_buffer(sites, dist = sites$NearestMean)
+```
+
+```{r}
+library(tmap)
+tmap_mode("view")
+
+tm_shape(sites) +
+  tm_dots()
+```
+
+```{r}
+library(mapview)
+mapview(buffers)
+```
