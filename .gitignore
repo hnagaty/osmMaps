@@ -1,0 +1,9 @@
+.Rproj.user
+.Rhistory
+.RData
+.Ruserdata
+*.Rproj
+*.code-workspace
+*.html
+osmAPI_files/
+sitesProximities_files/

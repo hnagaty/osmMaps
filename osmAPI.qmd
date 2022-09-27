@@ -5,16 +5,27 @@ editor: visual
 ---
 
 ```{r}
+#| echo: false
+#| warning: false
+#| message: false
 library(sf)
 library(units)
 library(tidyverse)
 library(kableExtra)
+library(tmap)
+library(osmdata)
+```
+
+```{r}
+#| label: globalsInit
+#| echo: false
+global_conf <- yaml::read_yaml("D:/DataAnalytics/~Configs/globalConf.yaml")
 ```
 
 ```{r}
 #| label: pins
 library(pins)
-pin_folder <- "/vol/data/dataLocal/pins"
+pin_folder <- "D:/DataAnalytics/~Pins"
 board <- board_folder(pin_folder, versioned = TRUE)
 
 # load pin if it exists
@@ -32,12 +43,32 @@ This [link](https://wiki.openstreetmap.org/wiki/Map_features) is useful for desc
 I use the R package [`osmdata`](https://docs.ropensci.org/osmdata/) for this. The package is designed to allow access to small-to-medium-sized OSM datasets. See [`osmextract`](https://github.com/ropensci/osmextract) for an approach for reading-in bulk OSM data extracts.
 
 ```{r}
+#| label: initProxy
+#| echo: false
+init_proxy <- function() {
+  proxy <- global_conf$httpProxy
+  proxy$password <- rstudioapi::askForPassword(prompt = "Proxy Password")
+  proxy_str <- paste0(
+    proxy$username, ":",
+    proxy$password, "@",
+    proxy$server, ":",
+    proxy$port
+  )
+  Sys.setenv(http_proxy = proxy_str)
+  Sys.setenv(https_proxy = proxy_str)
+}
+init_proxy()
+```
+
+```{r}
 library(osmdata)
 ```
 
 #### Get Bounding Box
 
 ```{r}
+#| echo: false
+#| eval: false
 getbb("cairo egypt", format_out = "sf_polygon") %>% plot()
 ```
 
@@ -55,6 +86,7 @@ egypt_box <- c(24.70007, 22.0, 36.86623, 31.58568)
 List available features in the Overpass API
 
 ```{r}
+#| eval: false
 available_features() |> 
   kbl()
 ```
@@ -84,6 +116,9 @@ roads <- t1 |>
 
 *This takes sometime, and downloads large data. It's because the primary roads are so huge.*
 
+```{}
+```
+
 ```{r}
 #| label: savePin
 #| eval: false
@@ -101,22 +136,24 @@ roads |>
   ggtitle("Egypt Roads")
 ```
 
-Motorways
+#### Motorways
 
 ```{r}
 roads |> 
   filter(highway == "motorway") |> 
-  mutate(Length = st_length(geometry)) |> 
+  mutate(Length = st_length(geometry)/2) |> 
   st_drop_geometry() |> 
-  group_by(name) |> 
+  group_by(name.en) |> 
   summarize(Length = set_units(sum(Length), "km")) |> 
   arrange(desc(Length)) |> 
-  rename("Road Name" = name, "Length in Km" = Length) |> 
+  rename("Road Name" = name.en, "Length in Km" = Length) |> 
   kbl(digits = 2) |> 
   kable_styling(bootstrap_options = c("hover")) |> 
   row_spec(0, bold = T, font_size = 16, align = "center") |> 
   column_spec(1, bold = T, border_right = T, width = "10cm") 
 ```
+
+#### The Ring Road
 
 Plot a single road name
 
@@ -126,8 +163,68 @@ roads |>
   ggplot() +
   geom_sf(aes(color = Interest, size = Interest)) +
   scale_colour_manual(values = c("Yes" = "red", "No" = "orange")) +
-  scale_size_manual(values =  c("Yes" = 1, "No" = 0.2)) +
-  ggtitle("Egypt Roads")
+  scale_size_manual(values =  c("Yes" = 1.4, "No" = 0.2)) +
+  ggtitle("The Ring Road") +
+  coord_sf(crs = 4326, xlim = c(31, 31.5), ylim = c(29.9, 30.2))
 ```
 
 To identify Cairo ring road, I filter by `highway = "motorway"` and `name.en = "The Ring Road"`.
+
+Plot an interactive map
+
+```{r}
+tmap_mode("view")
+tm_shape(roads) +
+  tm_lines(lwd = 2, col = "red")
+```
+
+Roads should be snapped to themselves, to remove the double-way lines and keep only a single line.
+
+```{r}
+ring <- roads |> 
+  filter(name.en == "The Ring Road" & highway == "motorway")
+st_length(st_union(ring))
+```
+
+```{r}
+tmap_mode("view")
+tm_shape(ring) +
+  tm_lines(lwd = 2, col = "red")
+```
+
+```{r}
+ring2 <- ring |> 
+  st_union() |> 
+  st_snap(st_union(ring), tolerance = 30) |> 
+  st_simplify()
+
+st_length(st_union(ring2))
+
+tm_shape(ring2) +
+  tm_lines(lwd = 2, col = "red")
+```
+
+```{r}
+
+```
+
+I can't remove the duplicate with a snap.
+
+### Amenities
+
+Now, let's explore the amenities
+
+```{r}
+#| label: readAmenities
+if (!exists("t2")) {
+  t2 <- opq(egypt_box) |>
+    add_osm_feature(key = "amenities") |> 
+    osmdata_sf()}
+```
+
+```{r}
+#| label: deinitProxy
+#| echo: false
+Sys.setenv(http_proxy = "")
+Sys.setenv(https_proxy = "")
+```

@@ -10,13 +10,36 @@ editor: visual
 #| echo: false
 library(tidyverse)
 library(sf)
+library(tmap)
+library(tmaptools)
+library(osmdata)
+library(pins)
 ```
 
 ```{r}
-#| label: init
+#| label: globalsInit
+#| echo: false
+library(yaml)
+global_conf <- read_yaml("D:/DataAnalytics/~Configs/globalConf.yaml")
+```
+
+```{r}
+#| label: projectInit
+#| echo: false
+# Project Behaviour
+conf <- list()
+conf$use_osm_pin <- TRUE # If TRUE, then use get OSM data from saved pin and don't download it.
+conf$use_udb_pin <- TRUE # If TRUE, then get UnifiedDB sites from the saved pin rather than the database.
+
+# Egypt CRS
 eg_crs <- list()
-eg_crs$utm <- 32636 # WGS84 Zone 36N
-eg_crs$wgs84  <- 4326 # WGS 84 Lat/Long
+eg_crs$utm <- global_conf$crs$utm36 
+eg_crs$wgs84  <- global_conf$crs$wgs84 
+
+# Pin board
+if (.Platform$OS.type == 'windows') {
+  board <- board_folder(global_conf$pins$boardW)
+}
 ```
 
 ```{r}
@@ -30,7 +53,13 @@ eg_crs$wgs84  <- 4326 # WGS 84 Lat/Long
 #' @param k number of nearest neighbours to consider, excluding
 #'        the 1st neigbour, as this is the self neigbour.
 #'
-#' @return a list 
+#' @return a list with an element for each stat. Those are:
+#'    k: number of nearest neighbours used in the calculations
+#'    names: site names of the nearest neighbour sites, arranged
+#'      with the distance (nearest is first)
+#'    mean: the mean distance of the k nearest neighbours
+#'    sd: the standard deviation of the distance of the k
+#'      nearest neighbours
 nearest_stats <- function(di, k) {
   k <- as.integer(k)
   stopifnot(k > 0)
@@ -43,21 +72,66 @@ nearest_stats <- function(di, k) {
   res$sd <- sd(ne, na.rm = TRUE)
   return(res)
 }
+
+#' Run a database query and return the result
+#'
+#' @param sql character string. The database query
+#' @param conn The database connection
+#'
+#' @return A dataframe of the query result
+run_query <- function(sql, conn) {
+  res <- dbSendQuery(conn, sql)
+  resdB <- dbFetch(res)
+  dbClearResult(res)
+  return(resdB)
+}
 ```
 
+#### Code Starts Here
+
 ```{r}
-#| label: initPin
-library(pins)
-board <- board_folder("/vol/data/dataLocal/pins", versioned = TRUE)
-pin_name <- "unifiedDB"
+#| label: initDBase
+
+# Only init if I don't read data from the pin
+if (!conf$use_udb_pin) {
+  library(DBI)
+  options(connectionObserver = NULL)
+  udb_con <- try(
+    dbConnect(
+      RMariaDB::MariaDB(),
+      dbname = global_conf$dbConnections$udb$database,
+      username = global_conf$dbConnections$udb$usernameR,
+      password = rstudioapi::askForPassword(
+        paste("MySQL password for",
+          global_conf$dbConnections$udb$usernameR,
+          "?")),
+      host = global_conf$dbConnections$udb$server))
+}
 ```
 
-Load the Sites
+#### The Sites
+
+##### Load the sites
 
 ```{r}
-#| label: loadSitesPin
-sites <- pin_read(board, pin_name) |> 
-  chuck("sites") |> 
+#| label: loadSites
+if (conf$use_udb_pin) {
+  sites <- pin_read(board, global_conf$pins$udb) |> 
+     chuck("sites")
+} else {
+    sites <- run_query("select * from vrVfeSitesSensitive;", udb_con)  
+}
+```
+
+*This is all sites, including live, planned, dismantled and any other. They are as discovered from Atoll*
+
+Sites could be loaded directly from UnifiedDB, or from the saved pin
+
+##### Basic cleaning
+
+```{r}
+#| label: cleanSites
+sites <- sites |> 
   filter(!is.na(ReadEarliestDiscoveryDate)) |> 
   filter(!is.na(Longitude)) |> 
   st_as_sf(coords = c("Longitude", "Latitude"),
@@ -65,7 +139,9 @@ sites <- pin_read(board, pin_name) |>
   st_transform(eg_crs$utm)
 ```
 
-Distance Matrix
+*This is the discovered sites (at any point in time). The data is converted into an `sf` object.*
+
+##### Distance Matrix
 
 ```{r distMatrix}
 d <- st_distance(sites)
@@ -73,11 +149,13 @@ colnames(d) <- sites$SiteID
 rownames(d) <- sites$SiteID
 ```
 
-This is an alternative code for calculating the nearest k statistics that I used in earlier projects.
-
 ```{r}
 #| label: nearestK
 #| eval: false
+#| echo: false
+
+# This is an alternative code for calculating the nearest k statistics that
+# I used in earlier projects. I don't use it here.
 
 library(RANN)
 
@@ -93,35 +171,119 @@ vfSites <- vfSites %>% mutate(normSd = sdDist/meanDist)
 
 ```
 
+##### Neighbour stats
+
 ```{r}
 #| label: calcStats
 # calculate nearest stats
 t <- d |> 
-  apply(1, nearest_stats, k = 2) |> 
+  apply(1, nearest_stats, k = 3) |> 
   as_tibble_col() |> 
   unnest_wider(value) |> 
-  rename(NearestMean = mean,
-       NearestSD = sd,
-       NearestK = k,
-       NearestSites = names) 
+  rename(
+    NearestMean = mean,
+    NearestSD = sd,
+    NearestK = k,
+    NearestSites = names) 
 # bind with sites
 sites <- sites |> 
   bind_cols(t)
 ```
 
+##### Buffer
+
+The buffer size is proportional to the average mean distance calculated above.
+
 ```{r}
 buffers <- st_buffer(sites, dist = sites$NearestMean)
 ```
 
+##### Plot
+
 ```{r}
-library(tmap)
 tmap_mode("view")
-
 tm_shape(sites) +
-  tm_dots()
+  tm_dots(col = "Class")
+```
+
+### OSM Features
+
+```{r}
+interest <- "The Ring Road"
+```
+
+I download an Open Street Map feature of interest. I will now download the "\*\*\`r interest\*\*"
+
+```{r}
+#| label: initProxy
+#| echo: false
+init_proxy <- function() {
+  proxy <- global_conf$httpProxy
+  proxy$password <- rstudioapi::askForPassword(prompt = "Proxy Password")
+  proxy_str <- paste0(
+    proxy$username, ":",
+    proxy$password, "@",
+    proxy$server, ":",
+    proxy$port
+  )
+  Sys.setenv(http_proxy = proxy_str)
+  Sys.setenv(https_proxy = proxy_str)
+}
+if (!conf$use_osm_pin) {init_proxy()}
 ```
 
 ```{r}
-library(mapview)
-mapview(buffers)
+#| label: loadOSM
+if (conf$use_osm_pin) {
+  interest_road <- pin_read(board, global_conf$pins$osm) |> 
+    chuck("osm_lines") |> 
+    filter(name.en == "The Ring Road" & highway == "motorway") |> 
+    st_transform(crs = 32636) |> 
+    st_union()
+} else {
+  egypt_box <- c(24.70007, 22.0, 36.86623, 31.58568)  
+  interest_road <- opq(egypt_box) |>
+    add_osm_feature(key = "highway", value = "motorway") |> 
+    add_osm_feature(key = "name.en", value = interest,
+                    match_case = FALSE,
+                    value_exact = FALSE,
+                    key_exact = FALSE) |> 
+    osmdata_sf() |> 
+    chuck("osm_lines") |> 
+    st_transform(crs = 32636) |> 
+    st_union()
+}
+plot(interest_road)
 ```
+
+```{r}
+#| label: deinitProxy
+#| echo: false
+Sys.setenv(http_proxy = "")
+Sys.setenv(https_proxy = "")
+```
+
+```{r}
+tmap_mode("view")
+tm_shape(interest_road) +
+  tm_lines(lwd = 2, col = "red")
+```
+
+### Intersection
+
+```{r}
+sites$Tag <- ifelse(st_intersects(buffers, interest_road, sparse = FALSE), interest, "None")
+```
+
+```{r}
+tm_shape(interest_road) +
+  tm_lines(lwd = 2, col = "red") +
+  tm_shape(sites) +
+  tm_dots(col = "Tag")
+```
+
+### Proposed Enhancements
+
+Exclude micros and indoors from inter-distance calculations
+
+Snap the road to itself, to keep a single way only.
