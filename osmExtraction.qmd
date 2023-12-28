@@ -1,0 +1,309 @@
+---
+title: "Downloading OSM Data"
+author: "Hany Nagaty"
+format: 
+  html:
+    theme: lux
+editor: visual
+---
+
+In the linked document, I used the [osmdata](https://cran.r-project.org/web/packages/osmdata/vignettes/osmdata.html) package to download selected OSM features using the Overpass API.
+
+In here, I use the [osmextract](https://cran.r-project.org/web/packages/osmextract/vignettes/osmextract.html) package to download huge bulks of data. The [readme](https://github.com/ropensci/osmextract) at the GitHub repo gives a good introduction about using the tool. In addition to this [vignette](https://cran.r-project.org/web/packages/osmextract/vignettes/osmextract.html).
+
+The `osmextract` data is not as exhaustive as the `osmdata`. For example, I didn't find the `natural: coastline` in the `osmextract` data.
+
+### Initialisation
+
+```{r}
+#| label: loadLibs
+#| echo: false
+#| warning: false
+#| message: false
+library(sf)
+library(units)
+library(tidyverse)
+library(kableExtra)
+library(tmap)
+library(osmextract)
+library(skimr)
+library(pins)
+```
+
+```{r}
+#| label: globalsInit
+#| echo: false
+
+use_pin <- TRUE
+
+if (.Platform$OS.type == "Windows") {
+  conf_file <- "D:/DataAnalytics/~Configs/globalConf.yaml"
+  } else if (.Platform$OS.type == "unix") {
+  conf_file <- "~/MEGA/myDataScience/conf/globalConf.yml"
+  } else {
+  message("Unsupported OS:", .Platform$OS.type, ". Config file not loaded.")
+}
+
+global_conf <- yaml::read_yaml(conf_file)
+egypt_box <- global_conf$geoBorders$egypt
+cairo_box <- global_conf$geoBorders$cairo
+
+tmap_mode("view")
+tmap_options(check.and.fix = TRUE)
+```
+
+```{r}
+#| label: initPins
+if (.Platform$OS.type == "Windows") {
+  board <- board_folder(global_conf$pins$boardW)
+  } else {
+  board <- board_folder(global_conf$pins$boardL)
+}
+pin_name <- global_conf$pins$osmE
+```
+
+### High Level Exploration
+
+#### OSM Providers
+
+```{r}
+oe_providers()
+```
+
+The default provider is [Geofabrik](https://www.geofabrik.de/), and is described as "the best known bulk OSM data provider".
+
+```{r}
+oe_match("Egypt")
+```
+
+### Download OSM
+
+The class of the downloaded object is `sf`
+
+```{r}
+if (use_pin) {
+  osm <- pin_read(board, pin_name)
+}
+```
+
+### Lines
+
+```{r}
+if (use_pin) {
+  osm_lines <- osm$lines
+} else {
+  osm_lines <- oe_get("Egypt", stringsAsFactors = FALSE, quiet = FALSE) |> 
+    mutate(across(all_of(c("highway", "waterway", "aerialway", "barrier", "man_made")), as.factor))
+}
+```
+
+```{r}
+osm_lines |> st_drop_geometry() |> skim()
+```
+
+#### Highway
+
+Items of interest here are `motorway`, `trunk` and `primary`.
+
+```{r}
+osm_lines |> 
+  st_drop_geometry() |> 
+  filter(!is.na(highway)) |> 
+  count(highway, sort = TRUE)
+```
+
+#### Waterway
+
+Items of interest here are `river` and `canal`. The former has the River Nile and the later has the Suez Canal.
+
+```{r}
+osm_lines |> 
+  st_drop_geometry() |> 
+  filter(!is.na(waterway)) |> 
+  count(waterway, sort = TRUE)
+```
+
+### Multi Linestring
+
+```{r}
+if (use_pin) {
+  osm_mlines <- osm$linestrings
+} else {
+  osm_mlines = oe_get("Egypt", stringsAsFactors = FALSE, quiet = FALSE, layer = "multilinestrings")
+}
+```
+
+```{r}
+osm_mlines |> st_drop_geometry() |> count(type)
+```
+
+All are of type `route`. Nothing of particular interest is in here.
+
+### Polygons
+
+```{r}
+if (use_pin) {
+  osm_pols <- osm$polygons
+} else {
+  osm_pols = oe_get("Egypt", stringsAsFactors = FALSE, quiet = FALSE, layer = "multipolygons") |> 
+    mutate(across(!any_of(c("osm_id", "osm_way_id", "name", "other_tag", "geometry")), as.factor))
+}
+```
+
+```{r}
+osm_pols |> 
+  st_drop_geometry() |> 
+  skim()
+```
+
+The majority of the polygons are for buildings. But, most of the time, building is an attribute for `amenity`
+
+#### Buildings
+
+```{r}
+osm_pols |> 
+  st_drop_geometry() |> 
+  filter(!is.na(building)) |> 
+  filter(is.na(amenity)) |>   # View()
+  count(building, sort = TRUE) |> 
+  kbl()
+```
+
+*The buildings are not of interest for me*
+
+#### Boundary
+
+##### Administrative
+
+```{r}
+osm_pols |> 
+  st_drop_geometry() |> 
+  filter(!is.na(boundary)) |> 
+  count(boundary, sort = TRUE) |> 
+  kbl()
+```
+
+```{r}
+osm_pols |> 
+  st_drop_geometry() |> 
+  filter(boundary == "administrative") |> 
+  count(place)
+```
+
+Admin level 4 is the governorates. Admin level 2 is Egypt.
+
+###### Governorates
+
+```{r}
+osm_pols |> 
+  st_drop_geometry() |> 
+  filter(!is.na(admin_level)) |> 
+  count(admin_level, sort = TRUE) |> 
+  kbl()
+osm_pols |> 
+  filter(boundary == "administrative") |> 
+  filter(admin_level == 4) |> # governorates
+  filter(type == "boundary") |> # Cairo has 2 overlapping polygons. The other has type = multipolygon
+  tm_shape() +
+  tm_polygons(alpha = 0.3, 
+              fill = "green", col = "blue", 
+              id = "name") +
+  tm_text("name")
+```
+
+*There is a clear shift between those borders and those of the underlying map.*
+
+###### Neighbourhoods
+
+```{r}
+osm_pols |> 
+  filter(boundary == "administrative") |> 
+  filter(place == "neighbourhood") |> 
+  tm_shape() +
+  tm_polygons(alpha = 0.3, 
+              fill = "green", col = "blue", 
+              id = "name")
+```
+
+##### Protected Areas
+
+```{r}
+osm_pols |> 
+  filter(boundary == "protected_area") |> 
+  tm_shape() +
+  tm_polygons(alpha = 0.3, 
+              fill = "green", col = "blue", 
+              id = "name")
+```
+
+### Points
+
+```{r}
+if (use_pin) {
+  osm_points <- osm$points 
+} else {
+  osm_points <- oe_get("Egypt", stringsAsFactors = FALSE, quiet = FALSE, layer = "points") |> 
+      mutate(across(all_of(c("barrier", "highway", "ref", "address",
+                         "is_in", "place", "man_made")), as.factor))
+}
+```
+
+This is a huge layer, it has `r nrow(osm_points)` points.
+
+```{r}
+osm_points |> 
+  st_drop_geometry() |> 
+  skim()
+```
+
+Eye-balling the data doesn't reveal any features of interest.
+
+#### Place
+
+```{r}
+osm_points |> 
+  select(-is_in, -address) |> 
+  st_drop_geometry() |> 
+  filter(!is.na(place)) |> 
+  count(place, sort = TRUE)
+```
+
+##### Cities, Towns & Villages
+
+```{r}
+osm_points |> 
+  select(-is_in, -address) |> 
+  filter(place %in% c("city", "town", "village")) |> 
+  mutate(place = fct_drop(place)) |> 
+  tm_shape() +
+  tm_dots(col = "place", id = "name")
+```
+
+### Save to Pin
+
+```{r}
+if (!use_pin) {
+  pin_write(board, 
+            list(lines = osm_lines,
+                 linestrings = osm_mlines,
+                 polygons = osm_pols,
+                 points = osm_points),
+            name = pin_name,
+            type = "rds")
+  }
+```
+
+### Conclusion
+
+Using `osmextract` for downloading OSM data is not as flexible as using the Overpass API (with `osmdata` for example). Using Overpass API, I have full control and can download the features as described in the [OSM Map Catalogue](https://wiki.openstreetmap.org/wiki/Map_features).
+
+Using `osmextract` might be useful for high level exploration of the data. For downloading data, I prefer to use the Overpass API.
+
+I found some interesting features here. Those are:
+
+-   **Highway**: motorway, trunk & primary
+-   **Waterway**: river & canal
+-   **Boundaries**: governorates, neighbourhoods and protectorates.
+-   **Places**: cities, towns & villages (point features)
+
+It is worth mentioning that the amenities and other landmarks of interest are mostly present in the polygon layer rather than the points layer.
